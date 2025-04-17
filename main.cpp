@@ -22,14 +22,22 @@ class Problem {
 class MergeSort : public Problem {
     private:
         const int PARALLEL_THRESHOLD = 10000;
+
         static void mergeRanges(vector<int>& v, int left, int mid, int right)
         {
             vector<int> tmp;
             tmp.reserve(right - left);
         
-            int i = left, j = mid;
+            int i = left;
+            int j = mid;
             while (i < mid && j < right) {
-                tmp.push_back(v[i] < v[j] ? v[i++] : v[j++]);
+                if (v[i] < v[j]) {
+                    tmp.push_back(v[i]);
+                    i++;
+                } else {
+                    tmp.push_back(v[j]);
+                    j++;
+                }
             }
 
             // copy any leftover bits
@@ -89,7 +97,8 @@ class MergeSort : public Problem {
                 {
                     sortRec(left, mid);
                     sortRec(mid, right);
-                } else
+                }
+                else
                 {
                     auto fut = async(launch::async, sortRec, left, mid); // SPAWN
                     sortRec(mid, right);
@@ -145,7 +154,7 @@ void testLoop(Problem& prob, int maxN) {
 }
 
 int main() {
-    int maxN = 1000000000;
+    int maxN = 10000000;
 
     // Problem vector
     vector<unique_ptr<Problem>> problems;
