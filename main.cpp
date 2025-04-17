@@ -7,23 +7,24 @@
 #include <iostream>
 #include <future>
 
+using namespace std;
 
 class Problem {
     public:
         virtual ~Problem() = default;
     
-        virtual std::vector<int> generateInput(int n) = 0;
-        virtual void runSerial(const std::vector<int>& data) = 0;
-        virtual void runParallel(const std::vector<int>& data) = 0;
+        virtual vector<int> generateInput(int n) = 0;
+        virtual void runSerial(const vector<int>& data) = 0;
+        virtual void runParallel(const vector<int>& data) = 0;
         virtual const char* name() const = 0;
 };
 
 class MergeSort : public Problem {
     private:
         const int PARALLEL_THRESHOLD = 10000;
-        static void mergeRanges(std::vector<int>& v, int left, int mid, int right)
+        static void mergeRanges(vector<int>& v, int left, int mid, int right)
         {
-            std::vector<int> tmp;
+            vector<int> tmp;
             tmp.reserve(right - left);
         
             int i = left, j = mid;
@@ -36,17 +37,17 @@ class MergeSort : public Problem {
             tmp.insert(tmp.end(), v.begin() + j, v.begin() + right);
         
             // write back
-            std::copy(tmp.begin(), tmp.end(), v.begin() + left);
+            copy(tmp.begin(), tmp.end(), v.begin() + left);
         }
     public:
-        std::vector<int> generateInput(int n) override
+        vector<int> generateInput(int n) override
         {
-            std::vector<int> values(n);
+            vector<int> values(n);
         
             // random number generator
-            std::random_device rd;
-            std::mt19937 rng(rd());
-            std::uniform_int_distribution<int> distribution(0, n);
+            random_device rd;
+            mt19937 rng(rd());
+            uniform_int_distribution<int> distribution(0, n);
             
             // Fill vector
             for (int& value : values) {
@@ -58,9 +59,9 @@ class MergeSort : public Problem {
     
         void runSerial(const std::vector<int>& data) override
         {
-            std::vector<int> v = data;
+            vector<int> v = data;
 
-            std::function<void(int,int)> sortRec = [&](int left, int right)
+            function<void(int,int)> sortRec = [&](int left, int right)
             {
                 if (right - left <= 1) return;
                 
@@ -74,11 +75,11 @@ class MergeSort : public Problem {
             sortRec(0, v.size());
         }
     
-        void runParallel(const std::vector<int>& data) override
+        void runParallel(const vector<int>& data) override
         {
-            std::vector<int> v = data;
+            vector<int> v = data;
         
-            std::function<void(int,int)> sortRec = [&](int left, int right)
+            function<void(int,int)> sortRec = [&](int left, int right)
             {
                 int size = right - left;
                 if (size <= 1) return;
@@ -90,7 +91,7 @@ class MergeSort : public Problem {
                     sortRec(mid, right);
                 } else
                 {
-                    auto fut = std::async(std::launch::async, sortRec, left, mid); // SPAWN
+                    auto fut = async(launch::async, sortRec, left, mid); // SPAWN
                     sortRec(mid, right);
                     fut.get(); // SYNC
                 }
@@ -109,31 +110,31 @@ class MergeSort : public Problem {
 template <typename Func>
 double timedRun(Func&& f) {
     // Log start time
-    auto start = std::chrono::high_resolution_clock::now();
+    auto start = chrono::high_resolution_clock::now();
     
     f(); // Run function
 
     // Log end time
-    auto end = std::chrono::high_resolution_clock::now();
+    auto end = chrono::high_resolution_clock::now();
 
     // Calculate elapsed time
-    auto delta = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
+    auto delta = chrono::duration_cast<chrono::milliseconds>(end - start);
 
     return delta.count();
 }
 
 
 void testProblem(Problem& prob, int n) {
-    std::cout << "Testing " << prob.name() << " with n = " << n << std::endl;
+    cout << "Testing " << prob.name() << " with n = " << n << endl;
 
     auto data = prob.generateInput(n);
     double tSerial   = timedRun([&]() { prob.runSerial(data); });
     double tParallel = timedRun([&]() { prob.runParallel(data); });
 
-    std::cout << "Serial: " << tSerial << " ms" << std::endl;
-    std::cout << "Parallel: " << tParallel << " ms" << std::endl;
-    std::cout << "Difference: " << tSerial - tParallel << " ms" << std::endl;
-    std::cout << "Speedup: " << tSerial / tParallel << std::endl;
+    cout << "Serial: " << tSerial << " ms" << endl;
+    cout << "Parallel: " << tParallel << " ms" << endl;
+    cout << "Difference: " << tSerial - tParallel << " ms" << endl;
+    cout << "Speedup: " << tSerial / tParallel << endl;
 }
 
 void testLoop(Problem& prob, int maxN) {
@@ -147,8 +148,8 @@ int main() {
     int maxN = 1000000000;
 
     // Problem vector
-    std::vector<std::unique_ptr<Problem>> problems;
-    problems.emplace_back(std::make_unique<MergeSort>());
+    vector<unique_ptr<Problem>> problems;
+    problems.emplace_back(make_unique<MergeSort>());
 
     // Test each problem
     for (auto& p : problems)
