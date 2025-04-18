@@ -169,6 +169,130 @@ class Demo : public Problem {
     const char* name() const override { return "placeholder name"; }
 };
 
+class CacheObliviousMatrixMultiply : public Problem {
+private:
+    const int PARALLEL_THRESHOLD = 64;
+
+    // Recursive cache-oblivious matrix multiply
+    void multiply(const vector<vector<int>>& A, const vector<vector<int>>& B,
+                  vector<vector<int>>& C,
+                  int ai, int aj,
+                  int bi, int bj,
+                  int ci, int cj,
+                  int size) {
+        if (size == 1) {
+            C[ci][cj] += A[ai][aj] * B[bi][bj];
+            return;
+        }
+
+        int half = size / 2;
+        multiply(A, B, C, ai, aj, bi, bj, ci, cj, half);
+        multiply(A, B, C, ai, aj + half, bi + half, bj, ci, cj, half);
+        multiply(A, B, C, ai, aj, bi, bj + half, ci, cj + half, half);
+        multiply(A, B, C, ai, aj + half, bi + half, bj + half, ci, cj + half, half);
+        multiply(A, B, C, ai + half, aj, bi, bj, ci + half, cj, half);
+        multiply(A, B, C, ai + half, aj + half, bi + half, bj, ci + half, cj, half);
+        multiply(A, B, C, ai + half, aj, bi, bj + half, ci + half, cj + half, half);
+        multiply(A, B, C, ai + half, aj + half, bi + half, bj + half, ci + half, cj + half, half);
+    }
+
+    // Parallel version
+    void multiplyParallel(const vector<vector<int>>& A, const vector<vector<int>>& B,
+                          vector<vector<int>>& C,
+                          int ai, int aj,
+                          int bi, int bj,
+                          int ci, int cj,
+                          int size) {
+        if (size == 1) {
+            C[ci][cj] += A[ai][aj] * B[bi][bj];
+            return;
+        }
+
+        int half = size / 2;
+
+        if (size <= PARALLEL_THRESHOLD) {
+            multiply(A, B, C, ai, aj, bi, bj, ci, cj, half);
+            multiply(A, B, C, ai, aj + half, bi + half, bj, ci, cj, half);
+            multiply(A, B, C, ai, aj, bi, bj + half, ci, cj + half, half);
+            multiply(A, B, C, ai, aj + half, bi + half, bj + half, ci, cj + half, half);
+            multiply(A, B, C, ai + half, aj, bi, bj, ci + half, cj, half);
+            multiply(A, B, C, ai + half, aj + half, bi + half, bj, ci + half, cj, half);
+            multiply(A, B, C, ai + half, aj, bi, bj + half, ci + half, cj + half, half);
+            multiply(A, B, C, ai + half, aj + half, bi + half, bj + half, ci + half, cj + half, half);
+        } else {
+            auto f1 = async(launch::async, [&]() {
+                multiplyParallel(A, B, C, ai, aj, bi, bj, ci, cj, half);
+            });
+            auto f2 = async(launch::async, [&]() {
+                multiplyParallel(A, B, C, ai, aj + half, bi + half, bj, ci, cj, half);
+            });
+            auto f3 = async(launch::async, [&]() {
+                multiplyParallel(A, B, C, ai, aj, bi, bj + half, ci, cj + half, half);
+            });
+            auto f4 = async(launch::async, [&]() {
+                multiplyParallel(A, B, C, ai, aj + half, bi + half, bj + half, ci, cj + half, half);
+            });
+
+            multiplyParallel(A, B, C, ai + half, aj, bi, bj, ci + half, cj, half);
+            multiplyParallel(A, B, C, ai + half, aj + half, bi + half, bj, ci + half, cj, half);
+            multiplyParallel(A, B, C, ai + half, aj, bi, bj + half, ci + half, cj + half, half);
+            multiplyParallel(A, B, C, ai + half, aj + half, bi + half, bj + half, ci + half, cj + half, half);
+
+            f1.get();
+            f2.get();
+            f3.get();
+            f4.get();
+        }
+    }
+
+public:
+    vector<int> generateInput(int n) override {
+        // n = side length of n x n matrix
+        int size = 2 * n * n;
+        vector<int> flat(size);
+
+        random_device rd;
+        mt19937 rng(rd());
+        uniform_int_distribution<int> dist(0, 100);
+
+        for (int& val : flat) val = dist(rng);
+        return flat;
+    }
+
+    void runSerial(const vector<int>& data) override {
+        int n = sqrt(data.size() / 2);
+        vector<vector<int>> A(n, vector<int>(n));
+        vector<vector<int>> B(n, vector<int>(n));
+        vector<vector<int>> C(n, vector<int>(n, 0));
+
+        for (int i = 0; i < n * n; ++i) {
+            A[i / n][i % n] = data[i];
+            B[i / n][i % n] = data[i + n * n];
+        }
+
+        multiply(A, B, C, 0, 0, 0, 0, 0, 0, n);
+    }
+
+    void runParallel(const vector<int>& data) override {
+        int n = sqrt(data.size() / 2);
+        vector<vector<int>> A(n, vector<int>(n));
+        vector<vector<int>> B(n, vector<int>(n));
+        vector<vector<int>> C(n, vector<int>(n, 0));
+
+        for (int i = 0; i < n * n; ++i) {
+            A[i / n][i % n] = data[i];
+            B[i / n][i % n] = data[i + n * n];
+        }
+
+        multiplyParallel(A, B, C, 0, 0, 0, 0, 0, 0, n);
+    }
+
+    const char* name() const override {
+        return "Cache-Oblivious Matrix Multiplication";
+    }
+};
+
+
 
 template <typename Func>
 double timedRun(Func&& f) {
@@ -213,6 +337,7 @@ int main() {
     // Problem vector
     vector<unique_ptr<Problem>> problems;
     problems.emplace_back(make_unique<MergeSort>());
+    problems.emplace_back(make_unique<CacheObliviousMatrixMultiply>());
 
     // Test each problem
     for (auto& p : problems)
