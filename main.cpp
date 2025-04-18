@@ -353,17 +353,12 @@ void testLoop(Problem& prob, int maxN) {
 }
 
 int main() {
-    int maxN = 10000000;
-
-    // Problem vector
     vector<unique_ptr<Problem>> problems;
     problems.emplace_back(make_unique<MergeSort>());
     problems.emplace_back(make_unique<CacheObliviousMatrixMultiply>());
 
-    // Test each problem
-    for (auto& p : problems)
-    {
-        testLoop(*p, maxN);
+    for (auto& p : problems) {
+        testProblem(*p);
     }
 
     return 0;
