@@ -23,30 +23,62 @@ class MergeSort : public Problem {
     private:
         const int PARALLEL_THRESHOLD = 10000;
 
-        static void mergeRanges(vector<int>& v, int left, int mid, int right)
-        {
-            vector<int> tmp;
-            tmp.reserve(right - left);
-        
-            int i = left;
-            int j = mid;
-            while (i < mid && j < right) {
-                if (v[i] < v[j]) {
-                    tmp.push_back(v[i]);
-                    i++;
-                } else {
-                    tmp.push_back(v[j]);
-                    j++;
-                }
-            }
+    void serialMergeRanges(vector<int>& v, int left, int mid, int right) {
+        vector<int> A(v.begin() + left, v.begin() + mid);
+        vector<int> B(v.begin() + mid, v.begin() + right);
+        int total = A.size() + B.size();
 
-            // copy any leftover bits
-            tmp.insert(tmp.end(), v.begin() + i, v.begin() + mid);
-            tmp.insert(tmp.end(), v.begin() + j, v.begin() + right);
-        
-            // write back
-            copy(tmp.begin(), tmp.end(), v.begin() + left);
+        vector<int> output;
+        output.resize(total);
+
+        auto mergeTask = [&](int a_start, int a_end, int b_start, int b_end, int out_start) {
+            merge(A.begin() + a_start, A.begin() + a_end,
+                       B.begin() + b_start, B.begin() + b_end,
+                       output.begin() + out_start);
+        };
+
+        if (total < PARALLEL_THRESHOLD) {
+            merge(A.begin(), A.end(), B.begin(), B.end(), output.begin());
+        } else {
+            int a_mid = A.size() / 2;
+            int b_split = lower_bound(B.begin(), B.end(), A[a_mid]) - B.begin();
+            int left_size = a_mid + b_split;
+
+            mergeTask(0, a_mid, 0, b_split, 0);
+            mergeTask(a_mid, A.size(), b_split, B.size(), left_size);
         }
+
+        copy(output.begin(), output.end(), v.begin() + left);
+    }
+
+    void parallelMergeRanges(vector<int>& v, int left, int mid, int right) {
+        vector<int> A(v.begin() + left, v.begin() + mid);
+        vector<int> B(v.begin() + mid, v.begin() + right);
+        int total = A.size() + B.size();
+
+        vector<int> output(total);
+
+        auto mergeTask = [&](int a_start, int a_end, int b_start, int b_end, int out_start) {
+            merge(A.begin() + a_start, A.begin() + a_end,
+                       B.begin() + b_start, B.begin() + b_end,
+                       output.begin() + out_start);
+        };
+
+        if (total < PARALLEL_THRESHOLD) {
+            merge(A.begin(), A.end(), B.begin(), B.end(), output.begin());
+        } else {
+            int a_mid = A.size() / 2;
+            int b_split = lower_bound(B.begin(), B.end(), A[a_mid]) - B.begin();
+            int left_size = a_mid + b_split;
+
+            auto fut = async(launch::async, mergeTask, 0, a_mid, 0, b_split, 0);
+            mergeTask(a_mid, A.size(), b_split, B.size(), left_size);
+            fut.get();
+        }
+
+        copy(output.begin(), output.end(), v.begin() + left);
+    }
+
     public:
         vector<int> generateInput(int n) override
         {
@@ -65,7 +97,7 @@ class MergeSort : public Problem {
             return values;
         }
     
-        void runSerial(const std::vector<int>& data) override
+        void runSerial(const vector<int>& data) override
         {
             vector<int> v = data;
 
@@ -78,7 +110,7 @@ class MergeSort : public Problem {
                 sortRec(left, mid);
                 sortRec(mid, right);
 
-                mergeRanges(v, left, mid, right);
+                serialMergeRanges(v, left, mid, right);
             };
             sortRec(0, v.size());
         }
@@ -104,7 +136,7 @@ class MergeSort : public Problem {
                     sortRec(mid, right);
                     fut.get(); // SYNC
                 }
-                mergeRanges(v, left, mid, right);
+                parallelMergeRanges(v, left, mid, right);
             };
         
             sortRec(0, v.size());
@@ -113,7 +145,29 @@ class MergeSort : public Problem {
         const char* name() const override { return "Sorting"; }
 };
 
+class Demo : public Problem {
+    private:
+        const int PARALLEL_THRESHOLD = 10000;
 
+        static void helperFunction(){
+            cout<<"helperFunction"<<endl;
+        };
+    public:
+        vector<int> generateInput(int n){
+            cout << "generateInput" << endl;
+            //return;
+        };
+
+        void runSerial(const vector<int>& data){
+            cout << "runSerial" << endl;
+        };
+
+        void runParallel(const vector<int>& data){
+            cout << "runParallel" << endl;
+        };
+
+    const char* name() const override { return "placeholder name"; }
+};
 
 
 template <typename Func>
