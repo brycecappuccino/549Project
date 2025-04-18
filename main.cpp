@@ -211,6 +211,7 @@ private:
         int half = size / 2;
 
         if (size <= PARALLEL_THRESHOLD) {
+            //8
             multiply(A, B, C, ai, aj, bi, bj, ci, cj, half);
             multiply(A, B, C, ai, aj + half, bi + half, bj, ci, cj, half);
             multiply(A, B, C, ai, aj, bi, bj + half, ci, cj + half, half);
