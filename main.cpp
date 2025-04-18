@@ -6,13 +6,15 @@
 #include <execution>
 #include <iostream>
 #include <future>
+#include <fstream>
 
 using namespace std;
 
 class Problem {
     public:
         virtual ~Problem() = default;
-    
+        virtual int maxN() const = 0;
+
         virtual vector<int> generateInput(int n) = 0;
         virtual void runSerial(const vector<int>& data) = 0;
         virtual void runParallel(const vector<int>& data) = 0;
@@ -21,9 +23,9 @@ class Problem {
 
 class MergeSort : public Problem {
     private:
-        const int PARALLEL_THRESHOLD = 10000;
+    const int PARALLEL_THRESHOLD = 10000;
 
-    void serialMergeRanges(vector<int>& v, int left, int mid, int right) {
+    void serialMergeRanges(vector<int>& v, int left, int mid, int right) const {
         vector<int> A(v.begin() + left, v.begin() + mid);
         vector<int> B(v.begin() + mid, v.begin() + right);
         int total = A.size() + B.size();
@@ -51,7 +53,7 @@ class MergeSort : public Problem {
         copy(output.begin(), output.end(), v.begin() + left);
     }
 
-    void parallelMergeRanges(vector<int>& v, int left, int mid, int right) {
+    void parallelMergeRanges(vector<int>& v, int left, int mid, int right) const {
         vector<int> A(v.begin() + left, v.begin() + mid);
         vector<int> B(v.begin() + mid, v.begin() + right);
         int total = A.size() + B.size();
@@ -80,6 +82,7 @@ class MergeSort : public Problem {
     }
 
     public:
+        int maxN() const override { return 1000000000; }
         vector<int> generateInput(int n) override
         {
             vector<int> values(n);
@@ -153,16 +156,18 @@ class Demo : public Problem {
             cout<<"helperFunction"<<endl;
         };
     public:
-        vector<int> generateInput(int n){
+        int maxN() const override { return 1000000000; }
+
+        vector<int> generateInput(int n) override{
             cout << "generateInput" << endl;
             //return;
         };
 
-        void runSerial(const vector<int>& data){
+        void runSerial(const vector<int>& data) override{
             cout << "runSerial" << endl;
         };
 
-        void runParallel(const vector<int>& data){
+        void runParallel(const vector<int>& data)override {
             cout << "runParallel" << endl;
         };
 
@@ -247,6 +252,7 @@ private:
     }
 
 public:
+    int maxN() const override { return 1000000; }
     vector<int> generateInput(int n) override {
         // n = side length of n x n matrix
         int size = 2 * n * n;
@@ -312,17 +318,31 @@ double timedRun(Func&& f) {
 }
 
 
-void testProblem(Problem& prob, int n) {
-    cout << "Testing " << prob.name() << " with n = " << n << endl;
+void testProblem(Problem& prob) {
+    string algoName = prob.name();
+    int maxN = prob.maxN();
+    string filename = algoName + "_" + to_string(maxN) + ".csv";
 
-    auto data = prob.generateInput(n);
-    double tSerial   = timedRun([&]() { prob.runSerial(data); });
-    double tParallel = timedRun([&]() { prob.runParallel(data); });
+    ofstream csvFile(filename);
+    csvFile << "N,Serial(ms),Parallel(ms),Speedup\n";
 
-    cout << "Serial: " << tSerial << " ms" << endl;
-    cout << "Parallel: " << tParallel << " ms" << endl;
-    cout << "Difference: " << tSerial - tParallel << " ms" << endl;
-    cout << "Speedup: " << tSerial / tParallel << endl;
+    for (int n = 10; n <= maxN; n *= 10) {
+        cout << "Testing " << algoName << " with n = " << n << endl;
+
+        auto data = prob.generateInput(n);
+        double tSerial = timedRun([&]() { prob.runSerial(data); });
+        double tParallel = timedRun([&]() { prob.runParallel(data); });
+
+        double speedup = tSerial / tParallel;
+
+        cout << "Serial: " << tSerial << " ms\n";
+        cout << "Parallel: " << tParallel << " ms\n";
+        cout << "Speedup: " << speedup << "\n\n";
+
+        csvFile << n << "," << tSerial << "," << tParallel << "," << speedup << "\n";
+    }
+
+    csvFile.close();
 }
 
 void testLoop(Problem& prob, int maxN) {
