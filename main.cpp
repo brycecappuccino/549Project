@@ -235,19 +235,28 @@ private:
             auto f3 = async(launch::async, [&]() {
                 multiplyParallel(A, B, C, ai, aj, bi, bj + half, ci, cj + half, half);
             });
-            auto f4 = async(launch::async, [&]() {
-                multiplyParallel(A, B, C, ai, aj + half, bi + half, bj + half, ci, cj + half, half);
-            });
-
-            multiplyParallel(A, B, C, ai + half, aj, bi, bj, ci + half, cj, half);
-            multiplyParallel(A, B, C, ai + half, aj + half, bi + half, bj, ci + half, cj, half);
-            multiplyParallel(A, B, C, ai + half, aj, bi, bj + half, ci + half, cj + half, half);
-            multiplyParallel(A, B, C, ai + half, aj + half, bi + half, bj + half, ci + half, cj + half, half);
+            multiplyParallel(A, B, C, ai, aj + half, bi + half, bj + half, ci, cj + half, half);
 
             f1.get();
             f2.get();
             f3.get();
-            f4.get();
+
+            f1 = async(launch::async, [&](){
+                multiplyParallel(A, B, C, ai + half, aj, bi, bj, ci + half, cj, half);
+            });
+            f2 = async(launch::async, [&]() {
+                multiplyParallel(A, B, C, ai + half, aj + half, bi + half, bj, ci + half, cj, half);
+            });
+            f3 = async(launch::async, [&](){
+                multiplyParallel(A, B, C, ai + half, aj, bi, bj + half, ci + half, cj + half, half);
+            });
+
+            multiplyParallel(A, B, C, ai + half, aj + half, bi + half, bj + half, ci + half, cj + half, half);
+
+
+            f1.get();
+            f2.get();
+            f3.get();
         }
     }
 
