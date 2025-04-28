@@ -8,20 +8,31 @@
 #include <future>
 #include <fstream>
 
+#include "pbbsbench/benchmarks/spanningForest/ndST/parlay/primitives.h"
+#include "pbbsbench/benchmarks/spanningForest/ndST/parlay/parallel.h"
+#include "pbbsbench/benchmarks/spanningForest/ndST/common/get_time.h"
+#include "pbbsbench/benchmarks/spanningForest/ndST/common/graph.h"
+#include "pbbsbench/benchmarks/spanningForest/ndST/common/atomics.h"
+#include "pbbsbench/benchmarks/spanningForest/ndST/algorithm/union_find.h"
+
+#include "pbbsbench/testData/graphData/randLocalGraph.C"
+
 using namespace std;
+using namespace benchIO;
 
+template <typename InputType>
 class Problem {
-    public:
-        virtual ~Problem() = default;
-        virtual int maxN() const = 0;
+public:
+    virtual ~Problem() = default;
+    virtual int maxN() const = 0;
 
-        virtual vector<int> generateInput(int n) = 0;
-        virtual void runSerial(const vector<int>& data) = 0;
-        virtual void runParallel(const vector<int>& data) = 0;
-        virtual const char* name() const = 0;
+    virtual InputType generateInput(int n) = 0;
+    virtual void runSerial(const InputType& data) = 0;
+    virtual void runParallel(const InputType& data) = 0;
+    virtual const char* name() const = 0;
 };
 
-class MergeSort : public Problem {
+class MergeSort : public Problem<vector<int>> {
     private:
     const int PARALLEL_THRESHOLD = 10000;
 
@@ -82,7 +93,7 @@ class MergeSort : public Problem {
     }
 
     public:
-        int maxN() const override { return 1000000000; }
+        int maxN() const override { return 100000; }
         vector<int> generateInput(int n) override
         {
             vector<int> values(n);
@@ -148,7 +159,7 @@ class MergeSort : public Problem {
         const char* name() const override { return "Sorting"; }
 };
 
-class Demo : public Problem {
+/*class Demo : public Problem {
     private:
         const int PARALLEL_THRESHOLD = 10000;
 
@@ -172,9 +183,9 @@ class Demo : public Problem {
         };
 
     const char* name() const override { return "placeholder name"; }
-};
+};*/
 
-class CacheObliviousMatrixMultiply : public Problem {
+class CacheObliviousMatrixMultiply : public Problem<vector<int>> {
 private:
     const int PARALLEL_THRESHOLD = 64;
 
@@ -259,11 +270,11 @@ private:
             f3.get();
         }
     }
-
 public:
-    int maxN() const override { return 1000000; }
+    int maxN() const override { return 1000; }
     vector<int> generateInput(int n) override {
         // n = side length of n x n matrix
+
         int size = 2 * n * n;
         vector<int> flat(size);
 
@@ -308,7 +319,86 @@ public:
     }
 };
 
+class SpanningForest : public Problem<edgeArray<int>> {
+private:
+    const int PARALLEL_THRESHOLD = 1000;
 
+public:
+    int maxN() const override { return 10000000; }
+
+    edgeArray<int> generateInput(int n) override {
+        size_t target_degree = 10;
+        size_t dim = 0;
+        size_t m = (target_degree / 2) * n; // number of edges
+
+        size_t edges_per_node = m / n; // average number of edges per node
+
+        // Actually generate edges
+        auto E = parlay::tabulate(m, [&] (size_t k) -> edge<int> {
+            size_t i = k / edges_per_node;
+            size_t j;
+            if (dim == 0) {
+                size_t h = k;
+                do {
+                    j = ((h = dataGen::hash<int>(h)) % n);
+                } while (j == i);
+            } else {
+                size_t pow = dim + 2;
+                size_t h = k;
+                do {
+                    while ((((h = dataGen::hash<int>(h)) % 1000003) < 500001)) pow += dim;
+                    j = (i + ((h = dataGen::hash<int>(h)) % (((long) 1) << pow))) % n;
+                } while (j == i);
+            }
+            return edge<int>(i, j);
+        });
+
+        return edgeArray<int>(std::move(E), n, n);
+    }
+
+    void runSerial(const edgeArray<int> &E) override{
+        uint m = E.nonZeros;
+        int n = E.numRows;
+        unionFind<int> UF(n);
+
+        parlay::sequence<uint> st(n);
+        size_t nInSt = 0;
+        for (uint i = 0; i < m; i++){
+            int u = UF.find(E[i].u);
+            int v = UF.find(E[i].v);
+            if (u != v) {
+                UF.union_roots(u, v);
+                st[nInSt++] = i;
+            }
+        }
+    };
+
+    void runParallel(const edgeArray<int> &E) override {
+        uint m = E.nonZeros;
+        int n = E.numRows;
+        unionFind<int> UF(n);
+        // initialize to an id out of range
+        parlay::sequence<uint> hooks(n, (uint) m);
+
+        parlay::parallel_for (0, m, [&] (uint i) {
+            int u = E[i].u;
+            int v = E[i].v;
+            while(1) {
+                u = UF.find(u);
+                v = UF.find(v);
+                if (u == v) break;
+                if (u > v) std::swap(u,v);
+                if (hooks[u] == m &&
+                    pbbs::atomic_compare_and_swap(&hooks[u], m, i)){
+                    UF.link(u, v);
+                    break;
+                }
+            }
+        }, PARALLEL_THRESHOLD);
+    };
+
+    const char* name() const  { return "Spanning Tree"; }
+};
 
 template <typename Func>
 double timedRun(Func&& f) {
@@ -327,7 +417,8 @@ double timedRun(Func&& f) {
 }
 
 
-void testProblem(Problem& prob) {
+template <typename T>
+void testProblem(Problem<T>& prob) {
     string algoName = prob.name();
     int maxN = prob.maxN();
     string filename = algoName + "_" + to_string(maxN) + ".csv";
@@ -354,19 +445,27 @@ void testProblem(Problem& prob) {
     csvFile.close();
 }
 
-void testLoop(Problem& prob, int maxN) {
+template <typename T>
+void testLoop(Problem<T>& prob, int maxN) {
     for(int n = 10; n <= maxN; n = n * 10)
     {
         testProblem(prob, n);
-    }   
+    }
 }
 
 int main() {
-    vector<unique_ptr<Problem>> problems;
-    problems.emplace_back(make_unique<MergeSort>());
-    problems.emplace_back(make_unique<CacheObliviousMatrixMultiply>());
+    vector<unique_ptr<Problem<vector<int>>>> problems_int;
+    problems_int.emplace_back(make_unique<MergeSort>());
+    problems_int.emplace_back(make_unique<CacheObliviousMatrixMultiply>());
 
-    for (auto& p : problems) {
+    vector<unique_ptr<Problem<edgeArray<int>>>> problems_edge;
+    problems_edge.emplace_back(make_unique<SpanningForest>());
+
+    for (auto& p : problems_int) {
+        testProblem(*p);
+    }
+
+    for (auto& p : problems_edge) {
         testProblem(*p);
     }
 
