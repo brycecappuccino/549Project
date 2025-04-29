@@ -8,14 +8,17 @@
 #include <future>
 #include <fstream>
 
-#include "pbbsbench/benchmarks/spanningForest/ndST/parlay/primitives.h"
-#include "pbbsbench/benchmarks/spanningForest/ndST/parlay/parallel.h"
-#include "pbbsbench/benchmarks/spanningForest/ndST/common/get_time.h"
-#include "pbbsbench/benchmarks/spanningForest/ndST/common/graph.h"
-#include "pbbsbench/benchmarks/spanningForest/ndST/common/atomics.h"
-#include "pbbsbench/benchmarks/spanningForest/ndST/algorithm/union_find.h"
+#include "pbbsbench/benchmarks/minSpanningForest/parallelFilterKruskal/parlay/primitives.h"
+#include "pbbsbench/benchmarks/minSpanningForest/parallelFilterKruskal/parlay/parallel.h"
+#include "pbbsbench/benchmarks/minSpanningForest/parallelFilterKruskal/common/get_time.h"
+#include "pbbsbench/benchmarks/minSpanningForest/parallelFilterKruskal/common/graph.h"
+#include "pbbsbench/benchmarks/minSpanningForest/parallelFilterKruskal/common/atomics.h"
+#include "pbbsbench/benchmarks/minSpanningForest/parallelFilterKruskal/common/speculative_for.h"
+#include "pbbsbench/benchmarks/minSpanningForest/parallelFilterKruskal/algorithm/kth_smallest.h"
+#include "pbbsbench/benchmarks/minSpanningForest/parallelFilterKruskal/algorithm/union_find.h"
 
 #include "pbbsbench/testData/graphData/randLocalGraph.C"
+#include "pbbsbench/testData/graphData/common/graphUtils.h"
 
 using namespace std;
 using namespace benchIO;
@@ -319,14 +322,84 @@ public:
     }
 };
 
-class SpanningForest : public Problem<edgeArray<int>> {
+class SpanningForest : public Problem<wghEdgeArray<int,float>> {
 private:
     const int PARALLEL_THRESHOLD = 1000;
+    
+    struct indexedEdge {
+        int u; int v; uint id; float w;
+        indexedEdge(int u, int v, uint id, float w)
+                : u(u), v(v), id(id), w(w){}
+        indexedEdge() {};
+    };
 
+    struct edgeAndIndex {
+        int u;
+        int v;
+        double weight;
+        uint id;
+        edgeAndIndex() {}
+        edgeAndIndex(int _u, int _v, double w, uint _id)
+                : u(_u), v(_v), id(_id), weight(w) {}
+    };
+
+    int unionFindLoop(edgeAndIndex* E, size_t m, size_t nInMst,
+                      unionFind<int> &UF, parlay::sequence<uint> &mst) {
+        for (size_t i = 0; i < m; i++) {
+            int u = UF.find(E[i].u);
+            int v = UF.find(E[i].v);
+
+            // union by rank
+            if (u != v) {
+                UF.union_roots(u,v);
+                mst.push_back(E[i].id); // add edge to output
+            }
+        }
+        return nInMst;
+    }
+
+    using reservation = pbbs::reservation<uint>;
+
+    struct UnionFindStep {
+        parlay::sequence<indexedEdge> &E;
+        parlay::sequence<reservation> &R;
+        unionFind<int> &UF;
+        parlay::sequence<bool> &inST;
+        UnionFindStep(parlay::sequence<indexedEdge> &E,
+                      unionFind<int> &UF,
+                      parlay::sequence<reservation> &R,
+                      parlay::sequence<bool> &inST) :
+                E(E), R(R), UF(UF), inST(inST) {}
+
+        bool reserve(uint i) {
+            int u = E[i].u = UF.find(E[i].u);
+            int v = E[i].v = UF.find(E[i].v);
+            if (u != v) {
+                R[v].reserve(i);
+                R[u].reserve(i);
+                return true;
+            } else return false;
+        }
+
+        bool commit(uint i) {
+            int u = E[i].u;
+            int v = E[i].v;
+            if (R[v].check(i)) {
+                R[u].checkReset(i);
+                UF.link(v, u);
+                inST[E[i].id] = true;
+                return true;}
+            else if (R[u].check(i)) {
+                UF.link(u, v);
+                inST[E[i].id] = true;
+                return true; }
+            else return false;
+        }
+    };
 public:
     int maxN() const override { return 10000000; }
 
-    edgeArray<int> generateInput(int n) override {
+    wghEdgeArray<int,float> generateInput(int n) override {
         size_t target_degree = 10;
         size_t dim = 0;
         size_t m = (target_degree / 2) * n; // number of edges
@@ -353,48 +426,82 @@ public:
             return edge<int>(i, j);
         });
 
-        return edgeArray<int>(std::move(E), n, n);
+        return addRandWeights(edgeArray<int>(std::move(E), n, n));
     }
 
-    void runSerial(const edgeArray<int> &E) override{
-        uint m = E.nonZeros;
-        int n = E.numRows;
-        unionFind<int> UF(n);
+    void runParallel(const wghEdgeArray<int,float> &E) override{
+        size_t m = E.m;
+        size_t n = E.n;
+        size_t k = min<size_t>(5 * n / 4, m);
 
-        parlay::sequence<uint> st(n);
-        size_t nInSt = 0;
-        for (uint i = 0; i < m; i++){
-            int u = UF.find(E[i].u);
-            int v = UF.find(E[i].v);
-            if (u != v) {
-                UF.union_roots(u, v);
-                st[nInSt++] = i;
-            }
-        }
+        // equal edge weights will prioritize the earliest one
+        auto edgeLess = [&] (indexedEdge a, indexedEdge b) {
+            return (a.w < b.w) || ((a.w == b.w) && (a.id < b.id));};
+
+        // tag each edge with an index
+        auto IW = parlay::delayed_seq<indexedEdge>(m, [&] (size_t i) {
+            return indexedEdge(E[i].u, E[i].v, i, E[i].weight);});
+
+        indexedEdge kth = pbbs::approximate_kth_smallest(IW, k, edgeLess);
+
+        auto IW1 = parlay::filter(IW, [&] (indexedEdge e) {
+            return edgeLess(e, kth);}); //edgeLess(e, kth);});
+
+        parlay::sort_inplace(IW1, edgeLess);
+
+        parlay::sequence<bool> mstFlags(m, false);
+        unionFind<int> UF(n);
+        parlay::sequence<reservation> R(n);
+        UnionFindStep UFStep1(IW1, UF, R,  mstFlags);
+        pbbs::speculative_for<int>(UFStep1, 0, IW1.size(), 5, false);
+
+        auto IW2 = parlay::filter(IW, [&] (indexedEdge e) {
+            return !edgeLess(e, kth) && UF.find(e.u) != UF.find(e.v);});
+
+        parlay::sort_inplace(IW2, edgeLess);
+
+        UnionFindStep UFStep2(IW2, UF, R, mstFlags);
+        pbbs::speculative_for<int>(UFStep2, 0, IW2.size(), 5, false);
+
+        parlay::sequence<uint> mst = parlay::internal::pack_index<uint>(mstFlags);
     };
 
-    void runParallel(const edgeArray<int> &E) override {
-        uint m = E.nonZeros;
-        int n = E.numRows;
-        unionFind<int> UF(n);
-        // initialize to an id out of range
-        parlay::sequence<uint> hooks(n, (uint) m);
+    void runSerial(const wghEdgeArray<int,float> &G) override {
+        auto EI = parlay::tabulate(G.m, [&] (size_t i) -> edgeAndIndex {
+            return edgeAndIndex(G.E[i].u, G.E[i].v, G.E[i].weight, i);});
 
-        parlay::parallel_for (0, m, [&] (uint i) {
-            int u = E[i].u;
-            int v = E[i].v;
-            while(1) {
-                u = UF.find(u);
-                v = UF.find(v);
-                if (u == v) break;
-                if (u > v) std::swap(u,v);
-                if (hooks[u] == m &&
-                    pbbs::atomic_compare_and_swap(&hooks[u], m, i)){
-                    UF.link(u, v);
-                    break;
-                }
-            }
-        }, PARALLEL_THRESHOLD);
+        auto edgeLess = [&] (edgeAndIndex a, edgeAndIndex b) {
+            return (a.weight == b.weight) ? (a.id < b.id) : (a.weight < b.weight);};
+
+        // partition so minimum 4/3 n elements are at bottom
+        size_t l = min(4*G.n/3,G.m);
+        std::nth_element(EI.begin(), EI.begin()+l, EI.begin()+G.m, edgeLess);
+
+        // sort the prefix
+        std::sort(EI.begin(), EI.begin()+l, edgeLess);
+
+        // create union-find structure
+        unionFind<int> UF(G.n);
+
+        // mst edges added to this sequence
+        parlay::sequence<uint> mst;
+
+        // run union-find over the prefix
+        size_t nInMst = unionFindLoop(EI.begin(), l, 0, UF, mst);
+
+        // pack down active edges
+        size_t k = 0;
+        for (size_t i = l; i < G.m; i++) {
+            int u = UF.find(EI[i].u);
+            int v = UF.find(EI[i].v);
+            if (u != v) EI[l + k++] = EI[i];
+        }
+
+        // sort remaining edges
+        std::sort(EI.begin()+l, EI.begin()+l+k, edgeLess);
+
+        // run union-find on remaining edges
+        nInMst = unionFindLoop(EI.begin()+l, k, nInMst, UF, mst);
     };
 
     const char* name() const  { return "Spanning Tree"; }
@@ -458,7 +565,7 @@ int main() {
     problems_int.emplace_back(make_unique<MergeSort>());
     problems_int.emplace_back(make_unique<CacheObliviousMatrixMultiply>());
 
-    vector<unique_ptr<Problem<edgeArray<int>>>> problems_edge;
+    vector<unique_ptr<Problem<wghEdgeArray<int,float>>>> problems_edge;
     problems_edge.emplace_back(make_unique<SpanningForest>());
 
     for (auto& p : problems_int) {
