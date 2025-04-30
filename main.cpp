@@ -96,7 +96,7 @@ class MergeSort : public Problem<vector<int>> {
     }
 
     public:
-        int maxN() const override { return 100000; }
+        int maxN() const override { return 1000; }
         vector<int> generateInput(int n) override
         {
             vector<int> values(n);
@@ -389,7 +389,7 @@ private:
         }
     };
 public:
-    int maxN() const override { return 10000000; }
+    int maxN() const override { return 1000000000; }
 
     wghEdgeArray<int,float> generateInput(int n) override {
         size_t target_degree = 10;
@@ -445,7 +445,7 @@ public:
         unionFind<int> UF(n);
         parlay::sequence<reservation> R(n);
         UnionFindStep UFStep1(IW1, UF, R,  mstFlags);
-        pbbs::speculative_for<int>(UFStep1, 0, IW1.size(), 5, false);
+        pbbs::speculative_for<int>(UFStep1, 0, IW1.size(), 1, false);
 
         auto IW2 = parlay::filter(IW, [&] (indexedEdge e) {
             return !edgeLess(e, kth) && UF.find(e.u) != UF.find(e.v);});
@@ -453,7 +453,7 @@ public:
         parlay::sort_inplace(IW2, edgeLess);
 
         UnionFindStep UFStep2(IW2, UF, R, mstFlags);
-        pbbs::speculative_for<int>(UFStep2, 0, IW2.size(), 5, false);
+        pbbs::speculative_for<int>(UFStep2, 0, IW2.size(), 1, false);
 
         parlay::sequence<uint> mst = parlay::internal::pack_index<uint>(mstFlags);
     };
@@ -525,7 +525,7 @@ void testProblem(Problem<T>& prob) {
     ofstream csvFile(filename);
     csvFile << "N,Serial(ms),Parallel(ms),Speedup\n";
 
-    for (int n = 10; n <= maxN; n *= 10) {
+    for (int n = 64; n <= maxN; n *= 2) {
         cout << "Testing " << algoName << " with n = " << n << endl;
 
         auto data = prob.generateInput(n);
@@ -546,7 +546,7 @@ void testProblem(Problem<T>& prob) {
 
 template <typename T>
 void testLoop(Problem<T>& prob, int maxN) {
-    for(int n = 10; n <= maxN; n = n * 10)
+    for(int n = 64; n <= maxN; n = n * 2)
     {
         testProblem(prob, n);
     }
