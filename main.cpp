@@ -192,28 +192,28 @@ class CacheObliviousMatrixMultiply : public Problem<vector<int>> {
 private:
     const int PARALLEL_THRESHOLD = 64;
 
-    // Recursive cache-oblivious matrix multiply
     void multiply(const vector<vector<int>>& A, const vector<vector<int>>& B,
                   vector<vector<int>>& C,
                   int ai, int aj,
                   int bi, int bj,
                   int ci, int cj,
                   int size) {
-        if (size == 1) {
-            C[ci][cj] += A[ai][aj] * B[bi][bj];
-            return;
+        for (int ii = 0; ii < size; ii += PARALLEL_THRESHOLD) {
+            for (int kk = 0; kk < size; kk += PARALLEL_THRESHOLD) {
+                for (int jj = 0; jj < size; jj += PARALLEL_THRESHOLD) {
+                    for (int i = ii; i < min(ii + PARALLEL_THRESHOLD, size); ++i) {
+                        for (int k = kk; k < min(kk + PARALLEL_THRESHOLD, size); ++k) {
+                            int a_val = A[ai + i][aj + k];
+                            for (int j = jj; j < min(jj + PARALLEL_THRESHOLD, size); ++j) {
+                                C[ci + i][cj + j] += a_val * B[bi + k][bj + j];
+                            }
+                        }
+                    }
+                }
+            }
         }
-
-        int half = size / 2;
-        multiply(A, B, C, ai, aj, bi, bj, ci, cj, half);
-        multiply(A, B, C, ai, aj + half, bi + half, bj, ci, cj, half);
-        multiply(A, B, C, ai, aj, bi, bj + half, ci, cj + half, half);
-        multiply(A, B, C, ai, aj + half, bi + half, bj + half, ci, cj + half, half);
-        multiply(A, B, C, ai + half, aj, bi, bj, ci + half, cj, half);
-        multiply(A, B, C, ai + half, aj + half, bi + half, bj, ci + half, cj, half);
-        multiply(A, B, C, ai + half, aj, bi, bj + half, ci + half, cj + half, half);
-        multiply(A, B, C, ai + half, aj + half, bi + half, bj + half, ci + half, cj + half, half);
     }
+
 
     // Parallel version
     void multiplyParallel(const vector<vector<int>>& A, const vector<vector<int>>& B,
@@ -230,15 +230,7 @@ private:
         int half = size / 2;
 
         if (size <= PARALLEL_THRESHOLD) {
-            //8
-            multiply(A, B, C, ai, aj, bi, bj, ci, cj, half);
-            multiply(A, B, C, ai, aj + half, bi + half, bj, ci, cj, half);
-            multiply(A, B, C, ai, aj, bi, bj + half, ci, cj + half, half);
-            multiply(A, B, C, ai, aj + half, bi + half, bj + half, ci, cj + half, half);
-            multiply(A, B, C, ai + half, aj, bi, bj, ci + half, cj, half);
-            multiply(A, B, C, ai + half, aj + half, bi + half, bj, ci + half, cj, half);
-            multiply(A, B, C, ai + half, aj, bi, bj + half, ci + half, cj + half, half);
-            multiply(A, B, C, ai + half, aj + half, bi + half, bj + half, ci + half, cj + half, half);
+            multiply(A, B, C, ai, aj, bi, bj, ci, cj, size);
         } else {
             auto f1 = async(launch::async, [&]() {
                 multiplyParallel(A, B, C, ai, aj, bi, bj, ci, cj, half);
@@ -322,7 +314,7 @@ public:
     }
 };
 
-class SpanningForest : public Problem<wghEdgeArray<int,float>> {
+class MinSpanningForest : public Problem<wghEdgeArray<int,float>> {
 private:
     const int PARALLEL_THRESHOLD = 1000;
     
@@ -504,7 +496,7 @@ public:
         nInMst = unionFindLoop(EI.begin()+l, k, nInMst, UF, mst);
     };
 
-    const char* name() const  { return "Spanning Tree"; }
+    const char* name() const  { return "Minimum Spanning Tree"; }
 };
 
 template <typename Func>
@@ -566,7 +558,7 @@ int main() {
     problems_int.emplace_back(make_unique<CacheObliviousMatrixMultiply>());
 
     vector<unique_ptr<Problem<wghEdgeArray<int,float>>>> problems_edge;
-    problems_edge.emplace_back(make_unique<SpanningForest>());
+    problems_edge.emplace_back(make_unique<MinSpanningForest>());
 
     for (auto& p : problems_int) {
         testProblem(*p);
