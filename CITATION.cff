@@ -1,0 +1,9 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+authors:
+  - family-names: Capuano, Miguens
+    given-names: Bryce, Francisco
+title: "Comparing Sequential and Parallel Performance of Classic
+Algorithms"
+version: 1.0
+date-released: 2025-05-01
