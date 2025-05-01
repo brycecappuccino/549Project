@@ -153,7 +153,7 @@ class MergeSort : public Problem<vector<int>> {
                     sortRec(mid, right);
                     fut.get(); // SYNC
                 }
-                parallelMergeRanges(v, left, mid, right);
+                serialMergeRanges(v, left, mid, right);
             };
         
             sortRec(0, v.size());
